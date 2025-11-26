@@ -9,6 +9,7 @@ __pycache__/
 venv/
 env/
 ENV/
+.venv/
 
 # IDE
 .vscode/
@@ -19,4 +20,7 @@ ENV/
 # OS
 .DS_Store
 Thumbs.db
+
+# Generated output files
+*.png
 
