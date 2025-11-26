@@ -47,7 +47,8 @@ def error_E(c, d):
     omega = d
 
     # integrate from t=0 to t=T using RK4
-    while t < T:
+    T_final = T + N_PERIODS * T
+    while t < T_final:
         theta, omega = rk4_step(t, theta, omega, h)
         t += h
 
