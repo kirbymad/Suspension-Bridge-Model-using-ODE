@@ -1,6 +1,8 @@
 import math
 import numpy as np
 import matplotlib.pyplot as plt
+import sys
+from datetime import datetime
 
 # ---------- Parameters ----------
 lam = 0.02              # forcing amplitude λ
@@ -42,6 +44,40 @@ def rk4_step(t, theta, omega, h):
     theta_next = theta + (h/6.0) * (k1_theta + 2*k2_theta + 2*k3_theta + k4_theta)
     omega_next = omega + (h/6.0) * (k1_omega + 2*k2_omega + 2*k3_omega + k4_omega)
     return theta_next, omega_next
+
+# ---------- Vertical model (bridge roadway) ----------
+# parameters for the vertical restoring force
+a_vert = 17.0   # coefficient for y^+
+b_vert = 1.0    # coefficient for y^-
+
+def vertical_rhs(t, y, yp):
+    """
+    Right-hand side for the vertical model:
+    y'' + 0.01 y' + a y^+ - b y^- = 10 + λ sin(μ t)
+    """
+    if y > 0:
+        y_plus = y
+        y_minus = 0.0
+    elif y < 0:
+        y_plus = 0.0
+        y_minus = -y   # y^- = max(-y, 0)
+    else:
+        y_plus = 0.0
+        y_minus = 0.0
+
+    spring = a_vert * y_plus - b_vert * y_minus
+    ypp = -0.01 * yp - spring + 10.0 + lam * math.sin(mu * t)
+    return yp, ypp
+
+def rk4_vertical_step(t, y, yp, h):
+    k1_y,  k1_yp  = vertical_rhs(t, y, yp)
+    k2_y,  k2_yp  = vertical_rhs(t + 0.5*h, y + 0.5*h*k1_y,  yp + 0.5*h*k1_yp)
+    k3_y,  k3_yp  = vertical_rhs(t + 0.5*h, y + 0.5*h*k2_y,  yp + 0.5*h*k2_yp)
+    k4_y,  k4_yp  = vertical_rhs(t + h,     y + h*k3_y,      yp + h*k3_yp)
+
+    y_next  = y  + (h/6.0) * (k1_y  + 2*k2_y  + 2*k3_y  + k4_y)
+    yp_next = yp + (h/6.0) * (k1_yp + 2*k2_yp + 2*k3_yp + k4_yp)
+    return y_next, yp_next
 
 # ---------- Error function E(c,d) ----------
 # E(c,d) = (c - y(NT))^2 + (d - y'(NT))^2
@@ -107,7 +143,7 @@ def grid_search():
 
     return E_matrix, best_pair, best_E
 
-# ---------- Plotting: error grid ----------
+# ---------- Plotting: error grid (heatmap) ----------
 def plot_error_grid(E_matrix, filename="torsion_error_grid.png"):
     E = np.array(E_matrix)
 
@@ -124,7 +160,7 @@ def plot_error_grid(E_matrix, filename="torsion_error_grid.png"):
     plt.savefig(filename, dpi=300)
     plt.close()
 
-# ---------- Plotting: torsional motion vs time ----------
+# ---------- Plotting: torsional motion vs time (many periods) ----------
 def plot_torsion_time_series(c0, d0, n_periods_plot=1, filename="torsion_time_series.png"):
     t = 0.0
     theta = c0
@@ -142,7 +178,7 @@ def plot_torsion_time_series(c0, d0, n_periods_plot=1, filename="torsion_time_se
         t += h
 
     plt.figure(figsize=(5, 4))
-    plt.plot(t_vals, theta_vals)
+    plt.plot(t_vals, theta_vals, color='black', linewidth=1)
     plt.xlabel("Time")
     plt.ylabel("Torsional Motion in Radians")
     plt.title(f"Torsional motion, c={c0:.2f}, d={d0:.2f}")
@@ -150,16 +186,259 @@ def plot_torsion_time_series(c0, d0, n_periods_plot=1, filename="torsion_time_se
     plt.savefig(filename, dpi=300)
     plt.close()
 
+# ---------- Plotting: vertical motion vs time (many periods) ----------
+def plot_vertical_time_series(y0, yp0, n_periods_plot=3,
+                              filename="vertical_time_series.png"):
+    t = 0.0
+    y = y0
+    yp = yp0
+
+    t_final = n_periods_plot * T
+
+    t_vals = []
+    y_vals = []
+
+    while t < t_final:
+        t_vals.append(t)
+        y_vals.append(y)
+        y, yp = rk4_vertical_step(t, y, yp, h)
+        t += h
+
+    plt.figure(figsize=(5,4))
+    plt.plot(t_vals, y_vals, color='black', linewidth=1.1)
+    plt.xlabel("Time")
+    plt.ylabel("Vertical Displacement")
+    plt.title(f"Vertical motion, y(0)={y0:.2f}, y'(0)={yp0:.2f}")
+    plt.tight_layout()
+    plt.savefig(filename, dpi=300)
+    plt.close()
+
+# ---------- Plotting: vertical one-period plot with fixed axes ----------
+def plot_vertical_one_period(y0, yp0, filename,
+                             ymin=-0.5, ymax=2.0):
+    """
+    Plot vertical motion y(t) over exactly one forcing period T,
+    with fixed axis ranges so multiple plots are comparable.
+    """
+    t = 0.0
+    y = y0
+    yp = yp0
+
+    t_vals = []
+    y_vals = []
+
+    t_final = T  # one forcing period
+
+    while t < t_final:
+        t_vals.append(t)
+        y_vals.append(y)
+        y, yp = rk4_vertical_step(t, y, yp, h)
+        t += h
+
+    plt.figure(figsize=(4.8, 3.6))
+    plt.plot(t_vals, y_vals, color='black', linewidth=1.1)
+
+    # FIXED axes so all three vertical plots match
+    plt.xlim(0, T)
+    plt.ylim(ymin, ymax)
+
+    plt.xlabel("One Period in Time")
+    plt.ylabel("Vertical Displacement")
+    plt.tight_layout()
+    plt.savefig(filename, dpi=300)
+    plt.close()
+
+# ---------- NEW: Figure-3-style one-period plot ----------
+def plot_one_period(c0, d0, filename="torsion_period.png",
+                    ymin=-1.0, ymax=1.0):
+    """
+    Plot torsional motion over exactly one forcing period T,
+    with fixed x-axis and y-axis ranges for consistency.
+    """
+    t = 0.0
+    theta = c0
+    omega = d0
+
+    t_vals = []
+    theta_vals = []
+
+    t_final = T  # exactly one period
+
+    while t < t_final:
+        t_vals.append(t)
+        theta_vals.append(theta)
+        theta, omega = rk4_step(t, theta, omega, h)
+        t += h
+
+    plt.figure(figsize=(4.5, 3.5))
+    plt.plot(t_vals, theta_vals, color='black', linewidth=1)
+
+    # FIXED AXIS RANGES
+    plt.xlim(0, T)
+    plt.ylim(ymin, ymax)
+
+    plt.xlabel("One Period in Time")
+    plt.ylabel("Torsional Displacement")
+    plt.title(f"c = {c0:.2f}, d = {d0:.2f}")
+    plt.tight_layout()
+    plt.savefig(filename, dpi=300)
+    plt.close()
+
+def local_grid_search(c0, d0, dc, dd, step, label):
+    """
+    Run a torsional grid search in a small rectangle around (c0, d0):
+    c ∈ [c0-dc, c0+dc], d ∈ [d0-dd, d0+dd] with given step.
+    Saves a heatmap with the label in the filename and returns
+    the matrix and best (c,d).
+    """
+    c_min = c0 - dc
+    c_max = c0 + dc
+    d_min = d0 - dd
+    d_max = d0 + dd
+    # build lists of c and d values
+    c_values = []
+    x = c_min
+    while x <= c_max + 1e-9:
+        c_values.append(x)
+        x += step
+
+    d_values = []
+    y = d_min
+    while y <= d_max + 1e-9:
+        d_values.append(y)
+        y += step
+
+    n_c = len(c_values)
+    n_d = len(d_values)
+
+    # matrix for E(c,d)
+    E_matrix = [[0.0 for _ in range(n_d)] for _ in range(n_c)]
+
+    best_E = None
+    best_pair = None
+
+    print(f"\n=== Local grid search around (c0={c0}, d0={d0}), label = {label} ===")
+
+    for i, c in enumerate(c_values):
+        for j, d in enumerate(d_values):
+            E_val = error_E(c, d)
+            E_matrix[i][j] = E_val
+            print(f"c = {c:.3f}, d = {d:.3f}, E(c,d) = {E_val:.4e}")
+            if best_E is None or E_val < best_E:
+                best_E = E_val
+                best_pair = (c, d)
+
+    # convert to numpy array and make a heatmap
+    E_np = np.array(E_matrix)
+    C, D = np.meshgrid(d_values, c_values)  # note order
+
+    plt.figure(figsize=(5, 4))
+    im = plt.pcolormesh(C, D, E_np, shading='auto')
+    plt.colorbar(im, label="E(c,d)")
+    plt.xlabel("d (initial angular velocity)")
+    plt.ylabel("c (initial angle)")
+    plt.title(f"Torsional error grid near (c0={c0:.2f}, d0={d0:.2f})")
+    plt.tight_layout()
+    plt.savefig(f"torsion_error_grid_{label}.png", dpi=300)
+    plt.close()
+
+    print(f"\nBest near {label}: (c, d) = ({best_pair[0]:.4f}, {best_pair[1]:.4f}), E = {best_E:.4e}")
+    return E_matrix, best_pair, best_E
+
+# ---------- Output capture class ----------
+class Tee:
+    """Class to write output to both console and file"""
+    def __init__(self, *files):
+        self.files = files
+    
+    def write(self, obj):
+        for f in self.files:
+            f.write(obj)
+            f.flush()
+    
+    def flush(self):
+        for f in self.files:
+            f.flush()
+
 # ---------- Main ----------
 if __name__ == "__main__":
-    # 1. Run the grid search and get the matrix + best (c,d)
-    E_matrix, best_pair, best_E = grid_search()
+    # Set up output file with timestamp
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    output_filename = f"output_{timestamp}.txt"
+    
+    # Redirect stdout to both console and file
+    original_stdout = sys.stdout
+    with open(output_filename, 'w', encoding='utf-8') as f:
+        sys.stdout = Tee(original_stdout, f)
+        
+        print(f"=== MATH333 Final Project Output ===")
+        print(f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+        print(f"Output file: {output_filename}\n")
+        
+        try:
+            # 1. Run the grid search and get the matrix + best (c,d)
+            E_matrix, best_pair, best_E = grid_search()
 
-    # 2. Heatmap of the grid (analog of the “grid image” in the paper)
-    plot_error_grid(E_matrix, filename="torsion_error_grid.png")
+            # 2. Heatmap of the grid (analog of the "grid image")
+            plot_error_grid(E_matrix, filename="torsion_error_grid.png")
 
-    # 3. Time–series plot for the best (c,d) over one period (like Fig. 4 style)
-    c_best, d_best = best_pair
-    plot_torsion_time_series(c_best, d_best,
-                             n_periods_plot=1,
-                             filename="torsion_time_series_best.png")
+            # 3. Local grid searches around three centers for refined solutions
+            # Small center: (0.0, 0.1)
+            _, best_small, _ = local_grid_search(0.0, 0.1, 0.1, 0.1, 0.01, "small")
+            c_small, d_small = best_small
+
+            # Medium center: (0.3, 0.3)
+            _, best_medium, _ = local_grid_search(0.3, 0.3, 0.1, 0.1, 0.01, "medium")
+            c_medium, d_medium = best_medium
+
+            # Large center: (0.7, 0.2)
+            _, best_large, _ = local_grid_search(0.7, 0.2, 0.1, 0.1, 0.01, "large")
+            c_large, d_large = best_large
+
+            # 4. Time–series plot for the best (c,d) from main grid search
+            c_best, d_best = best_pair
+            plot_torsion_time_series(c_best, d_best,
+                                     n_periods_plot=3,
+                                     filename="torsion_time_series_best.png")
+
+            # 5. Figure-3-style one-period plots using refined values from local searches
+            # Small stable (refined from local search around (0.0, 0.1))
+            plot_one_period(c_small, d_small, "fig3_small_stable.png",
+                            ymin=-1.0, ymax=1.0)
+
+            # Medium/large unstable (refined from local search around (0.3, 0.3))
+            plot_one_period(c_medium, d_medium, "fig3_large_unstable.png",
+                            ymin=-1.0, ymax=1.0)
+
+            # Large stable (refined from local search around (0.7, 0.2))
+            plot_one_period(c_large, d_large, "fig3_large_stable.png",
+                            ymin=-1.0, ymax=1.0)
+
+            # --- VERTICAL MODEL: Figure-3-style plots (small / large unstable / large stable) ---
+
+            # Small-amplitude vertical solution (paper's "intuitively obvious" one)
+            y0_small  = 0.584460095
+            yp0_small = 0.401083422
+            plot_vertical_one_period(y0_small, yp0_small,
+                                     "vert_small_stable.png",
+                                     ymin=-0.5, ymax=2.0)
+
+            # Large-amplitude unstable vertical solution
+            y0_unst  = 0.344135876
+            yp0_unst = 2.77765496
+            plot_vertical_one_period(y0_unst, yp0_unst,
+                                     "vert_large_unstable.png",
+                                     ymin=-0.5, ymax=2.0)
+
+            # Large-amplitude stable vertical solution
+            y0_large  = 0.312999338
+            yp0_large = -2.87405731
+            plot_vertical_one_period(y0_large, yp0_large,
+                                     "vert_large_stable.png",
+                                     ymin=-0.5, ymax=2.0)
+        
+        finally:
+            # Restore original stdout
+            sys.stdout = original_stdout
+    
+    print(f"\nOutput saved to: {output_filename}")
